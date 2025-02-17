@@ -52,3 +52,7 @@ Start character creation then you'll see addtional menu.
    (Asset bundle path relative from ```(game root)```/abdata:AnimatorController asset name):(AnimationClip Name)
  * Value
    display name
+
+# Preview
+
+![previwe](https://github.com/user-attachments/assets/1e13ca62-2758-48f5-8148-b7a173427c55)
