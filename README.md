@@ -4,9 +4,17 @@ Unity UI version of Clothes, Accessory and Pose state control GUI for SamabakeSc
 
 # Prerequests
 
- * BepInEx v6
- * CCPoseLoader 2.0.0 or later
- 
+ * [BepInEx](https://github.com/BepInEx/BepInEx)
+   * v6.0.0 be 725 or later
+ * [ByteFiddler]
+   * v1.0 or later and suitable configuration
+ * [BepInEx.ConfigurationManager](https://github.com/BepInEx/BepInEx.ConfigurationManager)
+   * v18.3 or later
+ * [CCPoseLoader](https://github.com/MaybeSamigroup/SVS-Fishbone)
+   * 2.0.1 or later
+
+Confirmed working under SVS 1.1.4 + [SVS-HF Patch](https://github.com/ManlyMarco/SVS-HF_Patch) 1.6 environment.
+
 # Installation
 
 Extract the release to game root.

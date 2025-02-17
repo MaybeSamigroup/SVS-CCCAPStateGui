@@ -2,7 +2,6 @@ using HarmonyLib;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
-using Il2CppInterop.Runtime;
 using CharacterCreation;
 using System;
 using System.IO;
@@ -12,58 +11,50 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using UniRx;
 using UniRx.Triggers;
+using Cysharp.Threading.Tasks;
+using ILLGames.Unity.Component;           
+using CCPoseLoader;
 
 namespace CCCAPStateGui
 {
-    // gather reference UI component from clothes edit panel.
-    // abdata/ui.unity3d should be loaded before.
-    internal class UIRefs
+    public static class Util
     {
+        internal static readonly Il2CppSystem.Threading.CancellationTokenSource Canceler = new();
+        static Action AwaitDestroy<T>(Action onSetup, Action onDestroy) where T : SingletonInitializer<T> =>
+            () => SingletonInitializer<T>.Instance.gameObject
+                    .GetComponentInChildren<ObservableDestroyTrigger>()
+                    .AddDisposableOnDestroy(Disposable.Create(onDestroy + AwaitSetup<T>(onSetup, onDestroy)));
+        static Action AwaitSetup<T>(Action onSetup, Action onDestroy) where T : SingletonInitializer<T> =>
+            () => UniTask.NextFrame().ContinueWith((Action)(() => Hook<T>(onSetup, onDestroy)));
+        public static void Hook<T>(Action onSetup, Action onDestroy) where T : SingletonInitializer<T> =>
+            SingletonInitializer<T>.WaitUntilSetup(Canceler.Token)
+                .ContinueWith(onSetup + AwaitDestroy<T>(onSetup, onDestroy));
+    }
+    // reference UI component
+    internal static class UIRef
+    {
+        // window base
+        internal static GameObject Window =>
+            HumanCustom.Instance.CustomCharaFile.FileWindow.gameObject.transform.Find("BasePanel").gameObject;
         // pose control object
-        internal GameObject PoseControl;
-        // window background
-        internal Image Window;
+        internal static Button PoseNext =>
+            HumanCustom.Instance.StateMiniSelection._posePack.PosePtn._btnNext;
+        internal static Button PosePrev =>
+            HumanCustom.Instance.StateMiniSelection._posePack.PosePtn._btnPrev;
+        internal static Toggle PoseToggle =>
+            HumanCustom.Instance.StateMiniSelection._posePack.TglPosePouse;
         // outlined text component
-        internal TextMeshProUGUI Text;
-        // button bacground image
-        internal Image Image;
-        // per state button image
-        internal Button Button;
-
-        internal UIRefs(AssetBundle bundle, GameObject poseControl) :
-            this(new GameObject(bundle.LoadAsset_Internal("assets/illgames/assetbundle/custom/ui/03_clothes/00_clothes.prefab", Il2CppType.From(typeof(GameObject))).Pointer))
-        {
-            PoseControl = poseControl;
-        }
-        internal UIRefs(GameObject refui) : this(refui.transform.Find("BaseView"))
-        { }
-        internal UIRefs(Transform refui) :
-            this(refui.Find("BG").GetComponent<Image>(), refui.Find("Contents"))
-        { }
-        internal UIRefs(Image image, Transform refui) :
-            this(refui.Find("Label").Find("T02-1").GetComponent<TextMeshProUGUI>(),
-                 refui.Find("objOptionSliders").Find("InputSliderButton(2Line)").Find("Interface").Find("btnDefault"))
-        {
-            Window = image;
-        }
-        internal UIRefs(TextMeshProUGUI text, Transform refui) : this(refui.GetComponent<Image>(), refui.GetComponent<Button>())
-        {
-            Text = text;
-        }
-        internal UIRefs(Image image, Button button)
-        {
-            Image = image;
-            Button = button;
-        }
-        // copy reference properties to target
-        internal Image RefWindow(Image dest) => dest.RefUI(Window);
-        // copy reference properties to target
-        internal TextMeshProUGUI RefText(TextMeshProUGUI dest) => dest.RefUI(Text);
-        // copy reference properties to target
-        internal Image RefButton(Image dest) => dest.RefUI(Image);
-        // copy reference properties to target
-        internal Button RefButton(Button dest) => dest.RefUI(Button);
+        internal static GameObject Text =>
+            HumanCustom.Instance._txtFullName.gameObject.transform.Find("NameTitle").Find("T02-1").gameObject;
+        internal static Transform PoseLayout =>
+            HumanCustom.Instance.StateMiniSelection._posePack.PosePtn.gameObject.transform.parent;
+        // button
+        internal static GameObject Button =>
+            SV.Config.ConfigWindow.Instance.transform.Find("Canvas").Find("Background").Find("MainWindow")
+                .Find("Settings").Find("Scroll View").Find("Viewport").Find("Content")
+                .Find("CameraSetting").Find("Content").Find("SensitivityX").Find("btnReset").gameObject;
     }
     // abstraction of labeled (categorized) status control
     internal class StateControl<TLabels, TStatus>
@@ -87,19 +78,18 @@ namespace CCCAPStateGui
             Toggle(label);
             ui.SetText(TranslateState(Get(label)));
         };
-        internal GameObject ComposeControl(GameObject go, UIRefs refs)
-        {
-            go = go.Wrap(new GameObject(Name)).HorizontalLayout();
-            ComposeControl(
-                VerticalLayout(go.Wrap(new GameObject("Labels"))),
-                VerticalLayout(go.Wrap(new GameObject("Buttons"))),
-                VerticalLayout(go.Wrap(new GameObject("Status"))), refs);
-            return go;
-        }
-        internal GameObject VerticalLayout(GameObject go)
+        internal GameObject ComposeControl(GameObject go) =>
+            new GameObject(Name).With(go.transform.Wrap)
+                .With(UIFactory.HorizontalLayout).With(HorizontalGroup(Labels.Count()));
+        internal Action<GameObject> HorizontalGroup(int count) => go => 
+            HorizontalGroup(
+                new GameObject("Labels").With(go.transform.Wrap).With(VerticalLayout(count)).transform,
+                new GameObject("Buttons").With(go.transform.Wrap).With(VerticalLayout(count)).transform,
+                new GameObject("Status").With(go.transform.Wrap).With(VerticalLayout(count)).transform);
+        internal Action<GameObject> VerticalLayout(int count) => go =>
         {
             go.AddComponent<RectTransform>();
-            go.AddComponent<LayoutElement>().preferredHeight = 25 * Labels.Count();
+            go.AddComponent<LayoutElement>().preferredHeight = 25 * count;
             go.AddComponent<VerticalLayoutGroup>().With(ui =>
             {
                 ui.spacing = 1;
@@ -112,24 +102,17 @@ namespace CCCAPStateGui
                 ui.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
                 ui.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             });
-            return go;
-        }
+        };
         // compose each label to {labels, buttons, status} control
-        internal void ComposeControl(GameObject labels, GameObject buttons, GameObject status, UIRefs refs) =>
-            Labels.Do(label =>
-            {
-                labels.Wrap(new GameObject("Label")).Label(refs, TranslateLabel(label));
-                buttons.Wrap(new GameObject("Button")).ToggleButton(refs)
-                    .GetComponent<Button>().onClick.AddListener(
-                        ComposeAction(label, status.Wrap(new GameObject("Label"))
-                            .State(refs, TranslateState(Get(label))).GetComponent<TextMeshProUGUI>()));
-            });
+        internal void HorizontalGroup(Transform labels, Transform buttons, Transform status) =>
+            Labels.Do(label => labels.With(() => buttons.ToggleButton((() => Toggle(label)) + status.State(() => TranslateState(Get(label))))).Label(TranslateLabel(label)));
+
         internal void UpdateState()
         {
             if (HumanCustom.Instance.transform.Find("UI").Find("Root").Find(Plugin.Name) != null)
             {
                 UpdateState(HumanCustom.Instance.transform.Find("UI")
-                    .Find("Root").Find(Plugin.Name).Find("Window").Find(Name).Find("Status")
+                    .Find("Root").Find(Plugin.Name).GetChild(0).Find(Name).Find("Status")
                     .GetComponentsInChildren<TextMeshProUGUI>());
             }
         }
@@ -145,56 +128,13 @@ namespace CCCAPStateGui
     // UI generation helpers
     internal static class UIFactory
     {
-        internal static ConfigEntry<bool> InitialVisibility { get; set; }
+        internal static ConfigEntry<bool> Visibility { get; set; }
         internal static ConfigEntry<string> Translations { get; set; }
+        internal static ConfigEntry<KeyboardShortcut> Toggle { get; set; }
         internal static Func<string, string> GuiTranslation;
         internal static Func<string, string> PoseTranslation;
-
-        // tweaks to make local namespace clean
-        internal static void With<T>(this T item, Action<T> action) => action(item);
-        internal static void With<T, S>(this T item, Func<T, S> action) => action(item);
-        // tweaks to link game object hierarchy first
-        internal static GameObject Wrap(this GameObject outer, GameObject inner)
-        {
-            inner.transform.SetParent(outer.transform);
-            return inner;
-        }
-        // copy componet property from reference
-        internal static Image RefUI(this Image dest, Image refs)
-        {
-            dest.type = refs.type;
-            dest.fillMethod = refs.fillMethod;
-            dest.fillOrigin = refs.fillOrigin;
-            dest.fillAmount = refs.fillAmount;
-            dest.fillCenter = refs.fillCenter;
-            dest.fillClockwise = refs.fillClockwise;
-            dest.sprite = refs.sprite;
-            dest.overrideSprite = refs.overrideSprite;
-            return dest;
-        }
-        // copy componet property from reference
-        internal static TextMeshProUGUI RefUI(this TextMeshProUGUI dest, TextMeshProUGUI refs)
-        {
-            dest.autoSizeTextContainer = refs.autoSizeTextContainer;
-            dest.fontSharedMaterial = refs.fontSharedMaterial;
-            dest.font = refs.font;
-            dest.alignment = refs.alignment;
-            dest.overflowMode = refs.overflowMode;
-            dest.enableWordWrapping = refs.enableWordWrapping;
-            dest.fontSize = refs.fontSize;
-            dest.faceColor = refs.faceColor;
-            dest.fontWeight = refs.fontWeight;
-            return dest;
-        }
-        // copy componet property from reference
-        internal static Button RefUI(this Button dest, Button refs)
-        {
-            dest.interactable = refs.interactable;
-            dest.transition = Selectable.Transition.SpriteSwap;
-            dest.spriteState = refs.spriteState;
-            return dest;
-        }
-        internal static GameObject HorizontalLayout(this GameObject go)
+        internal static void Wrap(this Transform tf, GameObject go) => go.transform.SetParent(tf);
+        internal static void HorizontalLayout(this GameObject go)
         {
             go.AddComponent<RectTransform>();
             go.AddComponent<LayoutElement>();
@@ -211,27 +151,18 @@ namespace CCCAPStateGui
                 ui.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
                 ui.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             });
-            return go;
         }
         // add button to open clothes and accessory status window
-        internal static void UI(this GameObject go, UIRefs refs)
+        internal static void UI(this GameObject go)
         {
             GuiTranslation = JsonSerializer.Deserialize<Dictionary<string, string>>
                 (File.OpenRead(Path.Combine(Translations.Value, "gui.json").ConfigPath().ConfigPath())).GuiTranslation();
             PoseTranslation = JsonSerializer.Deserialize<Dictionary<string, string>>
                 (File.OpenRead(Path.Combine(Translations.Value, "names.json").ConfigPath().ConfigPath())).PoseTranslation();
-            go.AddComponent<RectTransform>();
-            go.AddComponent<LayoutElement>().With(ui =>
-            {
-                ui.minWidth = 64;
-                ui.minHeight = 64;
-            });
-            refs.RefButton(go.AddComponent<Button>()).targetGraphic = refs.RefButton(go.AddComponent<Image>());
-            go.GetComponent<Button>()
-                .onClick.AddListener(new GameObject(Plugin.Name).Canvas(refs));
+            go.GetComponent<Button>().onClick.AddListener(new GameObject(Plugin.Name).Base());
         }
         // create clothes and accessory status canvas and return show/hide action
-        internal static Action Canvas(this GameObject go, UIRefs refs)
+        internal static Action Base(this GameObject go)
         {
             go.transform.SetParent(HumanCustom.Instance.transform.Find("UI").Find("Root"));
             go.AddComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
@@ -243,14 +174,17 @@ namespace CCCAPStateGui
             });
             go.AddComponent<GraphicRaycaster>();
             go.GetComponent<RectTransform>();
-            go.Wrap(new GameObject("Window")).Window(refs);
-            go.SetActive(InitialVisibility.Value);
-            return () => { go.SetActive(!go.active); };
+            return UnityEngine.Object.Instantiate(UIRef.Window, go.transform)
+                .With(Window).With(go => go.SetActive(Visibility.Value))
+                .ToggleAction();
         }
+        internal static Action ToggleAction(this GameObject go) => () => go.SetActive(!go.active);
         // create draggable window
-        internal static GameObject Window(this GameObject go, UIRefs refs)
+        internal static void Window(this GameObject go)
         {
-            go.AddComponent<RectTransform>().With(ui =>
+            UnityEngine.Object.Destroy(go.transform.Find("Header").gameObject);
+            UnityEngine.Object.Destroy(go.transform.Find("WinRect").gameObject);
+            go.GetComponent<RectTransform>().With(ui =>
             {
                 ui.anchorMin = new(0.0f, 1.0f);
                 ui.anchorMax = new(0.0f, 1.0f);
@@ -258,9 +192,9 @@ namespace CCCAPStateGui
                 ui.sizeDelta = new(180 / 1920, 900 / 1080);
                 ui.anchoredPosition = new(1600, -120);
             });
-            go.AddComponent<VerticalLayoutGroup>().With(ui =>
+            go.GetComponent<VerticalLayoutGroup>().With(ui =>
             {
-                ui.padding = new(20, 20, 10, 10);
+                ui.padding = new(20, 20, 0, 0);
                 ui.childControlWidth = true;
                 ui.childControlHeight = true;
             });
@@ -269,41 +203,42 @@ namespace CCCAPStateGui
                 ui.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
                 ui.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             });
-            refs.RefWindow(go.AddComponent<Image>());
-            go.Wrap(new GameObject("Title")).With(title =>
-            {
+            go.AddComponent<UI_DragWindow>().rtMove = go.GetComponent<RectTransform>();
+            new GameObject("Title").With(go.transform.Wrap).With(HorizontalLayout).With(title => {
                 title.AddComponent<CanvasRenderer>();
                 title.AddComponent<RectTransform>();
-                title.AddComponent<LayoutElement>().minHeight = 30;
-                title.AddComponent<UI_DragWindow>().With(ui =>
-                {
-                    ui.rtMove = go.GetComponent<RectTransform>();
+                title.AddComponent<LayoutElement>().minHeight = 25;
+                UnityEngine.Object.Instantiate(UIRef.PosePrev, title.transform).GetComponent<Button>().With(ui => {
+                    ui.onClick.AddListener((Action)(() => UIRef.PosePrev.onClick.Invoke()));
                 });
-                refs.RefText(title.AddComponent<TextMeshProUGUI>()).With(ui =>
-                {
+                UnityEngine.Object.Instantiate(UIRef.PoseNext, title.transform).With(ui => {
+                    ui.onClick.AddListener((Action)(() => UIRef.PoseNext.onClick.Invoke()));
+                });
+                UnityEngine.Object.Instantiate(UIRef.PoseToggle, title.transform).With(ui => {
+                    ui.onValueChanged.AddListener((Action<bool>)(value => UIRef.PoseToggle.onValueChanged.Invoke(value)));
+                });
+                UnityEngine.Object.Instantiate(UIRef.Text, title.transform).GetComponent<TextMeshProUGUI>().With(ui => {
                     ui.alignment = TextAlignmentOptions.Center;
                     ui.overflowMode = TextOverflowModes.Overflow;
-                    title.AddComponent<ObservableDestroyTrigger>()
-                        .AddDisposableOnDestroy(UniRx.Disposable.Create(ui.PoseUpdateHook().ToDisposable()));
+                    go.AddComponent<ObservableDestroyTrigger>()
+                        .AddDisposableOnDestroy(Disposable.Create(ui.PoseUpdateHook().ToDisposable()));
                 });
             });
-            go.Wrap(refs.PoseControl);
-            ClothesControl.ComposeControl(go, refs);
-            AccessoryControl.ComposeControl(go, refs);
-            return go;
+            ClothesControl.ComposeControl(go);
+            AccessoryControl.ComposeControl(go);
         }
         internal static Action<string> PoseUpdateHook(this TextMeshProUGUI ui) =>
             (input) => ui.SetText(PoseTranslation(input));
         internal static Action ToDisposable(this Action<string> action)
         {
-            CCPoseLoader.Hooks.OnPoseUpdate += action;
-            return () => { CCPoseLoader.Hooks.OnPoseUpdate -= action; };
+            Event.OnPoseUpdate += action;
+            return () => { Event.OnPoseUpdate -= action; };
         }
         // clothes status control
         internal static StateControl<ChaFileDefine.ClothesKind, ChaFileDefine.ClothesState> ClothesControl =
              new StateControl<ChaFileDefine.ClothesKind, ChaFileDefine.ClothesState>()
              {
-                 Name = "ClothesCOntrol",
+                 Name = "ClothesControl",
                  TranslateLabel = (input) => GuiTranslation(Enum.GetName(input)),
                  TranslateState = (input) => GuiTranslation(Enum.GetName(input)),
                  Toggle = (input) => HumanCustom.Instance?.Human?.cloth?.SetClothesStateNext(input),
@@ -324,73 +259,53 @@ namespace CCCAPStateGui
              };
 
         // create label component
-        internal static GameObject Label(this GameObject go, UIRefs refs, string label)
-        {
-            go.AddComponent<RectTransform>();
-            go.AddComponent<CanvasRenderer>();
-            go.AddComponent<LayoutElement>();
-            refs.RefText(go.AddComponent<TextMeshProUGUI>()).With(ui =>
-            {
-                ui.fontSize = 15;
-                ui.alignment = TextAlignmentOptions.Right;
-                ui.SetText(label);
+        internal static void Label(this Transform tf, string label) =>
+            UnityEngine.Object.Instantiate(UIRef.Text, tf).With(go => {
+                go.AddComponent<LayoutElement>();
+                go.GetComponent<TextMeshProUGUI>().With(ui => {
+                    ui.fontSize = 15;
+                    ui.autoSizeTextContainer = true;
+                    ui.alignment = TextAlignmentOptions.Right;
+                    ui.SetText(label);
+                });
             });
-            return go;
-        }
+
         // create button component
-        internal static GameObject ToggleButton(this GameObject go, UIRefs refs)
-        {
-            go.AddComponent<RectTransform>();
-            go.AddComponent<CanvasRenderer>();
-            go.AddComponent<LayoutElement>().With(ui =>
-            {
-                ui.preferredWidth = 24;
-                ui.preferredHeight = 24;
+        internal static void ToggleButton(this Transform tf, Action action) =>
+            UnityEngine.Object.Instantiate(UIRef.Button, tf).With(go => {
+                go.AddComponent<LayoutElement>().With(ui => {
+                    ui.preferredWidth = 24;
+                    ui.preferredHeight = 24;
+                });
+                go.GetComponent<Button>().onClick.AddListener(action);
             });
-            refs.RefButton(go.AddComponent<Button>()).targetGraphic = refs.RefButton(go.AddComponent<Image>());
-            return go;
-        }
+
         // create state comoponent
-        internal static GameObject State(this GameObject go, UIRefs refs, string state)
-        {
-            go.AddComponent<RectTransform>();
-            go.AddComponent<CanvasRenderer>();
-            go.AddComponent<LayoutElement>();
-            refs.RefText(go.AddComponent<TextMeshProUGUI>()).With(ui =>
-            {
+        internal static Action State(this Transform tf, Func<string> state) => 
+            UnityEngine.Object.Instantiate(UIRef.Text, tf).With(go => {
+                go.AddComponent<LayoutElement>();
+            }).GetComponent<TextMeshProUGUI>().With(ui => {
                 ui.fontSize = 15;
-                ui.alignment = TextAlignmentOptions.Center;
-                ui.SetText(state);
-            });
-            return go;
-        }
-        internal static GameObject PoseControl(this Transform layout, GameObject go)
-        {
-            go.HorizontalLayout();
-            go.Wrap(layout.Find("ptnSelect").Find("btnPrev").gameObject.MirrorButton());
-            go.Wrap(layout.Find("ptnSelect").Find("btnNext").gameObject.MirrorButton());
-            go.Wrap(layout.Find("tglPose").gameObject.MirrorToggle());
-            return go;
-        }
-        internal static GameObject MirrorButton(this GameObject go)
-        {
-            var mirror = UnityEngine.Object.Instantiate(go);
-            mirror.GetComponent<Button>()
-                .onClick.AddListener(go.GetComponent<Button>().MirrorAction());
-            return mirror;
-        }
-        internal static GameObject MirrorToggle(this GameObject go)
-        {
-            var mirror = UnityEngine.Object.Instantiate(go);
-            mirror.GetComponent<Toggle>()
-                .onValueChanged.AddListener(go.GetComponent<Toggle>().MirrorAction());
-            return mirror;
-        }
-        internal static Action MirrorAction(this Button ui) =>
-            () => ui.onClick.Invoke();
-        internal static Action<bool> MirrorAction(this Toggle ui) =>
-            (value) => ui.onValueChanged.Invoke(value);
-    }
+                ui.autoSizeTextContainer = true;
+                ui.alignment = TextAlignmentOptions.Left;
+                ui.SetText(state());
+           }).ComposeAction(state);
+        internal static Action ComposeAction(this TextMeshProUGUI ui, Func<string> state) => () => ui.SetText(state());
+        internal static Action InputCheck = () =>
+            HumanCustom.Instance.transform.Find("UI").Find("Root").Find(Plugin.Name)
+                .GetChild(0).gameObject.SetActive(Toggle.Value.IsDown() ? Visibility.Value = !Visibility.Value : Visibility.Value);
+
+        internal static void Setup() =>
+            UnityEngine.Object.Instantiate(UIRef.Button, UIRef.PoseLayout.With(layout => {
+                layout.Find("ptnSelect").Find("InputField_Integer").With(input =>
+                 {
+                    input.GetComponent<RectTransform>().sizeDelta = new(80, 26);
+                    input.GetComponent<TMP_InputField>().characterLimit = 5;
+                });
+            })).With(() => Canvas.preWillRenderCanvases += InputCheck).UI();
+        internal static void Dispose() =>
+            Canvas.preWillRenderCanvases -= InputCheck;
+   }
     internal static class Extension
     {
         [HarmonyPostfix]
@@ -402,32 +317,6 @@ namespace CCCAPStateGui
         [HarmonyPatch(typeof(HumanCustom), nameof(HumanCustom.UpdateAccessoryState))]
         internal static void UpdateAccessoryStatePostfix() =>
             UIFactory.AccessoryControl.UpdateState();
-        // UI should be made after abdata/ui.unity3d loaded
-        // so there would be better timing ...
-        [HarmonyPostfix]
-        [HarmonyPatch(typeof(StateMiniSelection), nameof(StateMiniSelection.InitPosePack))]
-        internal static void StateMiniSelectionInitPosePackPostfix(Component disposableComponent)
-        {
-            foreach (var bundle in AssetBundle.GetAllLoadedAssetBundles_Native())
-            {
-                if (Path.GetFileName(bundle.name).Equals("ui.unity3d"))
-                {
-                    disposableComponent.transform.Find("Window").Find("StateWindow")
-                        .Find("Pose").Find("PosePtn").Find("Layout").With(layout =>
-                        {
-                            // tweaks to mini state window
-                            layout.Find("ptnSelect").Find("InputField_Integer").With(input =>
-                            {
-                                input.GetComponent<RectTransform>().sizeDelta = new(80, 26);
-                                input.GetComponent<TMP_InputField>().characterLimit = 5;
-                            });
-                            layout.gameObject.Wrap(new GameObject("ShowHide"))
-                                .UI(new UIRefs(bundle, layout.PoseControl(new GameObject("PoseControl"))));
-                        });
-                    return;
-                }
-            }
-        }
         internal static string ConfigPath(this string value) =>
             Path.Combine(Paths.ConfigPath, Plugin.Name, value);
         internal static Func<string, string> GuiTranslation(this Dictionary<string, string> names) =>
@@ -443,21 +332,16 @@ namespace CCCAPStateGui
         public const string Process = "SamabakeScramble";
         public const string Name = "CCCAPStateGui";
         public const string Guid = $"{Process}.{Name}";
-        public const string Version = "1.0.0";
-        private Harmony[] Patches;
+        public const string Version = "1.0.1";
+        private Harmony Patch;
         public override void Load()
         {
-            UIFactory.InitialVisibility = Config.Bind(new ConfigDefinition("General", "InitialVisibility"), true);
+            UIFactory.Visibility = Config.Bind(new ConfigDefinition("General", "Visibility"), true);
             UIFactory.Translations = Config.Bind(new ConfigDefinition("General", "TranslationDir"), "C#");
-            Patches = new[]
-            {
-                Harmony.CreateAndPatchAll(typeof(Extension), $"{Name}.Hooks")
-            };
+            UIFactory.Toggle = Config.Bind("General", "Toggle CCCAPState GUI", new KeyboardShortcut(KeyCode.Tab, KeyCode.LeftShift));
+            Util.Hook<HumanCustom>(UIFactory.Setup, UIFactory.Dispose);
+            Patch = Harmony.CreateAndPatchAll(typeof(Extension), $"{Name}.Hooks");
         }
-        public override bool Unload()
-        {
-            Patches.Do(patch => patch.UnpatchSelf());
-            return base.Unload();
-        }
+        public override bool Unload() => true.With(Patch.UnpatchSelf) && base.Unload();
     }
 }
