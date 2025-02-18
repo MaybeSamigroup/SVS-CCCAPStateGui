@@ -14,11 +14,18 @@ using TMPro;
 using UniRx;
 using UniRx.Triggers;
 using Cysharp.Threading.Tasks;
-using ILLGames.Unity.Component;           
+using ILLGames.Unity.Component;
 using CCPoseLoader;
 
 namespace CCCAPStateGui
 {
+    public delegate void Either(Action a, Action b);
+    public static class FunctionalExtension
+    {
+        public static Either Either(bool value) => value ? (left, right) => right() : (left, right) => left();
+        public static void Either(this bool value, Action left, Action right) => Either(value)(left, right);
+        public static void Maybe(this bool value, Action maybe) => value.Either(() => { }, maybe);
+    }
     public static class Util
     {
         internal static readonly Il2CppSystem.Threading.CancellationTokenSource Canceler = new();
@@ -81,7 +88,7 @@ namespace CCCAPStateGui
         internal GameObject ComposeControl(GameObject go) =>
             new GameObject(Name).With(go.transform.Wrap)
                 .With(UIFactory.HorizontalLayout).With(HorizontalGroup(Labels.Count()));
-        internal Action<GameObject> HorizontalGroup(int count) => go => 
+        internal Action<GameObject> HorizontalGroup(int count) => go =>
             HorizontalGroup(
                 new GameObject("Labels").With(go.transform.Wrap).With(VerticalLayout(count)).transform,
                 new GameObject("Buttons").With(go.transform.Wrap).With(VerticalLayout(count)).transform,
@@ -105,7 +112,9 @@ namespace CCCAPStateGui
         };
         // compose each label to {labels, buttons, status} control
         internal void HorizontalGroup(Transform labels, Transform buttons, Transform status) =>
-            Labels.Do(label => labels.With(() => buttons.ToggleButton((() => Toggle(label)) + status.State(() => TranslateState(Get(label))))).Label(TranslateLabel(label)));
+            Labels.Do(label => labels.With(() => buttons
+                .ToggleButton((() => Toggle(label)) + status.State(() => TranslateState(Get(label)))))
+                .Label(TranslateLabel(label)));
 
         internal void UpdateState()
         {
@@ -204,20 +213,25 @@ namespace CCCAPStateGui
                 ui.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             });
             go.AddComponent<UI_DragWindow>().rtMove = go.GetComponent<RectTransform>();
-            new GameObject("Title").With(go.transform.Wrap).With(HorizontalLayout).With(title => {
+            new GameObject("Title").With(go.transform.Wrap).With(HorizontalLayout).With(title =>
+            {
                 title.AddComponent<CanvasRenderer>();
                 title.AddComponent<RectTransform>();
                 title.AddComponent<LayoutElement>().minHeight = 25;
-                UnityEngine.Object.Instantiate(UIRef.PosePrev, title.transform).GetComponent<Button>().With(ui => {
+                UnityEngine.Object.Instantiate(UIRef.PosePrev, title.transform).GetComponent<Button>().With(ui =>
+                {
                     ui.onClick.AddListener((Action)(() => UIRef.PosePrev.onClick.Invoke()));
                 });
-                UnityEngine.Object.Instantiate(UIRef.PoseNext, title.transform).With(ui => {
+                UnityEngine.Object.Instantiate(UIRef.PoseNext, title.transform).With(ui =>
+                {
                     ui.onClick.AddListener((Action)(() => UIRef.PoseNext.onClick.Invoke()));
                 });
-                UnityEngine.Object.Instantiate(UIRef.PoseToggle, title.transform).With(ui => {
+                UnityEngine.Object.Instantiate(UIRef.PoseToggle, title.transform).With(ui =>
+                {
                     ui.onValueChanged.AddListener((Action<bool>)(value => UIRef.PoseToggle.onValueChanged.Invoke(value)));
                 });
-                UnityEngine.Object.Instantiate(UIRef.Text, title.transform).GetComponent<TextMeshProUGUI>().With(ui => {
+                UnityEngine.Object.Instantiate(UIRef.Text, title.transform).GetComponent<TextMeshProUGUI>().With(ui =>
+                {
                     ui.alignment = TextAlignmentOptions.Center;
                     ui.overflowMode = TextOverflowModes.Overflow;
                     go.AddComponent<ObservableDestroyTrigger>()
@@ -252,8 +266,8 @@ namespace CCCAPStateGui
              {
                  Name = "AccessoryControl",
                  TranslateLabel = (input) => $"{GuiTranslation("Slot")}{input + 1}",
-                 TranslateState = (input) => GuiTranslation(input ? "ON" : "OFF"),
-                 Toggle = (input) => HumanCustom.Instance?.Human?.acs?.SetAccessoryState(input, 
+                 TranslateState = (input) => GuiTranslation(input ? "OFF" : "ON"),
+                 Toggle = (input) => HumanCustom.Instance?.Human?.acs?.SetAccessoryState(input,
                     !(HumanCustom.Instance?.Human?.acs?.accessories[input]?.objAccessory?.active ?? true)),
                  Get = (input) => HumanCustom.Instance?.Human?.acs?.accessories[input]?.objAccessory?.active ?? false,
                  Labels = Enumerable.Range(0, ChaFileDefine.AccessorySlotNum)
@@ -261,9 +275,11 @@ namespace CCCAPStateGui
 
         // create label component
         internal static void Label(this Transform tf, string label) =>
-            UnityEngine.Object.Instantiate(UIRef.Text, tf).With(go => {
+            UnityEngine.Object.Instantiate(UIRef.Text, tf).With(go =>
+            {
                 go.AddComponent<LayoutElement>();
-                go.GetComponent<TextMeshProUGUI>().With(ui => {
+                go.GetComponent<TextMeshProUGUI>().With(ui =>
+                {
                     ui.fontSize = 15;
                     ui.autoSizeTextContainer = true;
                     ui.alignment = TextAlignmentOptions.Right;
@@ -273,8 +289,10 @@ namespace CCCAPStateGui
 
         // create button component
         internal static void ToggleButton(this Transform tf, Action action) =>
-            UnityEngine.Object.Instantiate(UIRef.Button, tf).With(go => {
-                go.AddComponent<LayoutElement>().With(ui => {
+            UnityEngine.Object.Instantiate(UIRef.Button, tf).With(go =>
+            {
+                go.AddComponent<LayoutElement>().With(ui =>
+                {
                     ui.preferredWidth = 24;
                     ui.preferredHeight = 24;
                 });
@@ -282,29 +300,46 @@ namespace CCCAPStateGui
             });
 
         // create state comoponent
-        internal static Action State(this Transform tf, Func<string> state) => 
-            UnityEngine.Object.Instantiate(UIRef.Text, tf).With(go => {
+        internal static Action State(this Transform tf, Func<string> state) =>
+            UnityEngine.Object.Instantiate(UIRef.Text, tf).With(go =>
+            {
                 go.AddComponent<LayoutElement>();
-            }).GetComponent<TextMeshProUGUI>().With(ui => {
+            }).GetComponent<TextMeshProUGUI>().With(ui =>
+            {
                 ui.fontSize = 15;
                 ui.autoSizeTextContainer = true;
                 ui.alignment = TextAlignmentOptions.Left;
                 ui.SetText(state());
-           }).ComposeAction(state);
+            }).ComposeAction(state);
         internal static Action ComposeAction(this TextMeshProUGUI ui, Func<string> state) => () => ui.SetText(state());
+        internal static void Show() =>
+            HumanCustom.Instance?.transform?.Find("UI")?.Find("Root")?.Find(Plugin.Name)?.GetChild(0)?.gameObject?.With(go => go.active = true);
+        internal static void Hide() =>
+            HumanCustom.Instance?.transform?.Find("UI")?.Find("Root")?.Find(Plugin.Name)?.GetChild(0)?.gameObject?.With(go => go.active = false);
+        internal static Il2CppSystem.Threading.CancellationTokenSource Canceler = new();
+        internal static UniTask RefreshTask = UniTask.CompletedTask;
+        internal static void Refresh() => Visibility.Value.Either(Hide, Show);
+        internal static void CancelRefresh() =>
+            (!RefreshTask.Status.IsCompleted()).Maybe(Canceler.Cancel);
+        internal static void ScheduleRefresh() =>
+            RefreshTask.Status.IsCompleted().Maybe(() => RefreshTask = UniTask.NextFrame().ContinueWith((Action)Refresh));
         internal static Action InputCheck = () =>
-            HumanCustom.Instance.transform?.Find("UI")?.Find("Root")?.Find(Plugin.Name)
-                ?.GetChild(0)?.gameObject?.SetActive(Toggle.Value.IsDown() ? Visibility.Value = !Visibility.Value : Visibility.Value);
-        internal static void Setup() =>
-            UnityEngine.Object.Instantiate(UIRef.Button, UIRef.PoseLayout.With(layout => {
+            Toggle.Value.IsDown().Maybe(() => (Visibility.Value = !Visibility.Value).With(ScheduleRefresh));
+        internal static void Setup() {
+            UnityEngine.Object.Instantiate(UIRef.Button, UIRef.PoseLayout.With(layout =>
+            {
                 layout.Find("ptnSelect").Find("InputField_Integer").With(input =>
                  {
-                    input.GetComponent<RectTransform>().sizeDelta = new(80, 26);
-                    input.GetComponent<TMP_InputField>().characterLimit = 5;
-                });
+                     input.GetComponent<RectTransform>().sizeDelta = new(80, 26);
+                     input.GetComponent<TMP_InputField>().characterLimit = 5;
+                 });
             })).UI();
-        internal static void Dispose() {}
-   }
+            Canvas.preWillRenderCanvases += InputCheck;
+        }
+        internal static void Dispose() {
+            Canvas.preWillRenderCanvases -= InputCheck;
+         }
+    }
     internal static class Extension
     {
         [HarmonyPostfix]
