@@ -253,9 +253,10 @@ namespace CCCAPStateGui
                  Name = "AccessoryControl",
                  TranslateLabel = (input) => $"{GuiTranslation("Slot")}{input + 1}",
                  TranslateState = (input) => GuiTranslation(input ? "ON" : "OFF"),
-                 Toggle = (input) => HumanCustom.Instance?.Human?.acs?.SetAccessoryState(input, !HumanCustom.Instance?.Human?.acs?.IsAccessory(input) ?? false),
-                 Get = (input) => HumanCustom.Instance?.Human?.acs?.IsAccessory(input) ?? false,
-                 Labels = Enumerable.Range(0, 20)
+                 Toggle = (input) => HumanCustom.Instance?.Human?.acs?.SetAccessoryState(input, 
+                    !(HumanCustom.Instance?.Human?.acs?.accessories[input]?.objAccessory?.active ?? true)),
+                 Get = (input) => HumanCustom.Instance?.Human?.acs?.accessories[input]?.objAccessory?.active ?? false,
+                 Labels = Enumerable.Range(0, ChaFileDefine.AccessorySlotNum)
              };
 
         // create label component
@@ -292,9 +293,8 @@ namespace CCCAPStateGui
            }).ComposeAction(state);
         internal static Action ComposeAction(this TextMeshProUGUI ui, Func<string> state) => () => ui.SetText(state());
         internal static Action InputCheck = () =>
-            HumanCustom.Instance.transform.Find("UI").Find("Root").Find(Plugin.Name)
-                .GetChild(0).gameObject.SetActive(Toggle.Value.IsDown() ? Visibility.Value = !Visibility.Value : Visibility.Value);
-
+            HumanCustom.Instance.transform?.Find("UI")?.Find("Root")?.Find(Plugin.Name)
+                ?.GetChild(0)?.gameObject?.SetActive(Toggle.Value.IsDown() ? Visibility.Value = !Visibility.Value : Visibility.Value);
         internal static void Setup() =>
             UnityEngine.Object.Instantiate(UIRef.Button, UIRef.PoseLayout.With(layout => {
                 layout.Find("ptnSelect").Find("InputField_Integer").With(input =>
@@ -302,9 +302,8 @@ namespace CCCAPStateGui
                     input.GetComponent<RectTransform>().sizeDelta = new(80, 26);
                     input.GetComponent<TMP_InputField>().characterLimit = 5;
                 });
-            })).With(() => Canvas.preWillRenderCanvases += InputCheck).UI();
-        internal static void Dispose() =>
-            Canvas.preWillRenderCanvases -= InputCheck;
+            })).UI();
+        internal static void Dispose() {}
    }
     internal static class Extension
     {
@@ -329,6 +328,7 @@ namespace CCCAPStateGui
     [BepInPlugin(Guid, Name, Version)]
     public class Plugin : BasePlugin
     {
+        internal static Plugin Instance;
         public const string Process = "SamabakeScramble";
         public const string Name = "CCCAPStateGui";
         public const string Guid = $"{Process}.{Name}";
@@ -341,6 +341,7 @@ namespace CCCAPStateGui
             UIFactory.Toggle = Config.Bind("General", "Toggle CCCAPState GUI", new KeyboardShortcut(KeyCode.Tab, KeyCode.LeftShift));
             Util.Hook<HumanCustom>(UIFactory.Setup, UIFactory.Dispose);
             Patch = Harmony.CreateAndPatchAll(typeof(Extension), $"{Name}.Hooks");
+            Instance = this;
         }
         public override bool Unload() => true.With(Patch.UnpatchSelf) && base.Unload();
     }

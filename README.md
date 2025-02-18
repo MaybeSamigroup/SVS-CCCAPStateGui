@@ -6,7 +6,7 @@ Unity UI version of Clothes, Accessory and Pose state control GUI for SamabakeSc
 
  * [BepInEx](https://github.com/BepInEx/BepInEx)
    * v6.0.0 be 725 or later
- * [ByteFiddler]
+ * [ByteFiddler](https://github.com/BepInEx/BepInEx)
    * v1.0 or later and suitable configuration
  * [BepInEx.ConfigurationManager](https://github.com/BepInEx/BepInEx.ConfigurationManager)
    * v18.3 or later
